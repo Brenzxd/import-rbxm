@@ -1,4 +1,4 @@
--- File: RBXM.lua (Glassmorphism Solid + Gradasi Gemini + Support .rbxm/.rbxmx/.rbxl/.rbxlx)
+-- File: RBXM.lua (Auto Import + Preserve Script Names + Quick Script Access + Glass UI)
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -6,6 +6,7 @@ local CoreGui = game:GetService("CoreGui")
 local RBXMImporter = {}
 local selectedFilePath: string? = nil
 local isMinimized = false
+local importedScripts: {LuaSourceContainer} = {}
 
 -- Membersihkan UI lama jika skrip dijalankan ulang
 local existingGui = (gethui and gethui():FindFirstChild("GeminiRBXMImporter")) or CoreGui:FindFirstChild("GeminiRBXMImporter")
@@ -40,7 +41,7 @@ local function getSupportedFiles(directory: string?): {string}
 	return results
 end
 
--- 2. Pemindah Anak Objek Aman (Melewati PackageLink & Mencegah Error Parent)
+-- 2. Pemindah Anak Objek Aman (Melewati PackageLink)
 local function safeMoveChildren(sourceParent: Instance, targetParent: Instance)
 	for _, child in ipairs(sourceParent:GetChildren()) do
 		if child:IsA("PackageLink") then
@@ -53,9 +54,11 @@ local function safeMoveChildren(sourceParent: Instance, targetParent: Instance)
 	end
 end
 
--- 3. Membuat Ulang Script agar Editable + Mempertahankan Nama Asli & Anak Objek
-local function makeScriptsEditable(root: Instance)
+-- 3. Membuat Ulang Script agar Siap Pakai & Mempertahankan Nama Asli
+local function rebuildScriptsEditable(root: Instance): {LuaSourceContainer}
+	local createdScripts = {}
 	local targets = {}
+
 	for _, desc in ipairs(root:GetDescendants()) do
 		if desc:IsA("LocalScript") or desc:IsA("Script") or desc:IsA("ModuleScript") then
 			table.insert(targets, desc)
@@ -129,17 +132,21 @@ local function makeScriptsEditable(root: Instance)
 				pcall(function()
 					oldScript:Destroy()
 				end)
+
+				table.insert(createdScripts, freshScript)
 			else
 				freshScript:Destroy()
 			end
 		end
 	end
+
+	return createdScripts
 end
 
--- 4. Fungsi Import untuk .rbxm, .rbxmx, .rbxl, dan .rbxlx
+-- 4. Fungsi Import Otomatis (.rbxm, .rbxmx, .rbxl, .rbxlx)
 function RBXMImporter.ImportFile(filePath: string)
 	if not filePath or filePath == "" then
-		return false, "Pilih file terlebih dahulu!"
+		return false, "Pilih file terlebih dahulu!", {}
 	end
 
 	local assetUrl = nil
@@ -148,7 +155,7 @@ function RBXMImporter.ImportFile(filePath: string)
 	elseif getsynasset then
 		assetUrl = getsynasset(filePath)
 	else
-		return false, "getcustomasset tidak didukung."
+		return false, "getcustomasset tidak didukung.", {}
 	end
 
 	local success, objects = pcall(function()
@@ -156,7 +163,7 @@ function RBXMImporter.ImportFile(filePath: string)
 	end)
 
 	if not success or not objects or #objects == 0 then
-		return false, "Gagal membaca file RBXM/RBXL."
+		return false, "Gagal membaca file RBXM/RBXL.", {}
 	end
 
 	local cleanName = filePath:match("([^/\\]+)%.rbx[ml][x]?$") or "ImportedModel"
@@ -186,9 +193,8 @@ function RBXMImporter.ImportFile(filePath: string)
 		end
 	end
 
-	makeScriptsEditable(container)
-
-	return true, "Berhasil import: " .. cleanName
+	local scriptsFound = rebuildScriptsEditable(container)
+	return true, "Siap pakai: " .. cleanName .. " (" .. tostring(#scriptsFound) .. " script)", scriptsFound
 end
 
 -- 5. Membangun Antarmuka UI
@@ -197,13 +203,12 @@ screenGui.Name = "GeminiRBXMImporter"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = (gethui and gethui()) or CoreGui
 
--- Main Frame (Lebih Solid & Terbaca dengan Nuansa Kaca Gradasi Gemini)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 310, 0, 340)
-mainFrame.Position = UDim2.new(0.5, -155, 0.5, -170)
+mainFrame.Size = UDim2.new(0, 315, 0, 385)
+mainFrame.Position = UDim2.new(0.5, -157, 0.5, -192)
 mainFrame.BackgroundColor3 = Color3.fromRGB(238, 244, 255)
-mainFrame.BackgroundTransparency = 0.22
+mainFrame.BackgroundTransparency = 0.2
 mainFrame.BorderSizePixel = 0
 mainFrame.ClipsDescendants = true
 mainFrame.Parent = screenGui
@@ -247,7 +252,6 @@ titleLabel.TextSize = 14
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = header
 
--- Tombol Buka / Tutup
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Name = "ToggleButton"
 toggleBtn.Size = UDim2.new(0, 64, 0, 26)
@@ -279,14 +283,14 @@ contentFrame.BackgroundTransparency = 1
 contentFrame.Parent = mainFrame
 
 local subHeader = Instance.new("Frame")
-subHeader.Size = UDim2.new(1, 0, 0, 24)
+subHeader.Size = UDim2.new(1, 0, 0, 22)
 subHeader.BackgroundTransparency = 1
 subHeader.Parent = contentFrame
 
 local pickLabel = Instance.new("TextLabel")
-pickLabel.Size = UDim2.new(0.7, 0, 1, 0)
+pickLabel.Size = UDim2.new(0.72, 0, 1, 0)
 pickLabel.BackgroundTransparency = 1
-pickLabel.Text = "Pilih File (.rbxm / .rbxl):"
+pickLabel.Text = "File (.rbxm / .rbxl):"
 pickLabel.TextColor3 = Color3.fromRGB(25, 35, 70)
 pickLabel.Font = Enum.Font.GothamSemibold
 pickLabel.TextSize = 12
@@ -294,8 +298,8 @@ pickLabel.TextXAlignment = Enum.TextXAlignment.Left
 pickLabel.Parent = subHeader
 
 local refreshBtn = Instance.new("TextButton")
-refreshBtn.Size = UDim2.new(0, 62, 0, 22)
-refreshBtn.Position = UDim2.new(1, -62, 0.5, -11)
+refreshBtn.Size = UDim2.new(0, 62, 0, 20)
+refreshBtn.Position = UDim2.new(1, -62, 0.5, -10)
 refreshBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 refreshBtn.BackgroundTransparency = 0.25
 refreshBtn.Text = "↻ Scan"
@@ -308,11 +312,11 @@ local refreshCorner = Instance.new("UICorner")
 refreshCorner.CornerRadius = UDim.new(0, 6)
 refreshCorner.Parent = refreshBtn
 
--- Daftar Scrollable File
+-- Daftar File
 local fileListFrame = Instance.new("ScrollingFrame")
 fileListFrame.Name = "FileList"
-fileListFrame.Size = UDim2.new(1, 0, 0, 185)
-fileListFrame.Position = UDim2.new(0, 0, 0, 28)
+fileListFrame.Size = UDim2.new(1, 0, 0, 120)
+fileListFrame.Position = UDim2.new(0, 0, 0, 25)
 fileListFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 fileListFrame.BackgroundTransparency = 0.35
 fileListFrame.BorderSizePixel = 0
@@ -326,30 +330,66 @@ local listCorner = Instance.new("UICorner")
 listCorner.CornerRadius = UDim.new(0, 9)
 listCorner.Parent = fileListFrame
 
-local listStroke = Instance.new("UIStroke")
-listStroke.Color = Color3.fromRGB(255, 255, 255)
-listStroke.Transparency = 0.35
-listStroke.Thickness = 1
-listStroke.Parent = fileListFrame
-
 local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 5)
+listLayout.Padding = UDim.new(0, 4)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = fileListFrame
 
 local listPadding = Instance.new("UIPadding")
-listPadding.PaddingTop = UDim.new(0, 6)
-listPadding.PaddingBottom = UDim.new(0, 6)
-listPadding.PaddingLeft = UDim.new(0, 6)
-listPadding.PaddingRight = UDim.new(0, 6)
+listPadding.PaddingTop = UDim.new(0, 5)
+listPadding.PaddingBottom = UDim.new(0, 5)
+listPadding.PaddingLeft = UDim.new(0, 5)
+listPadding.PaddingRight = UDim.new(0, 5)
 listPadding.Parent = fileListFrame
+
+-- Label Daftar Script Hasil Import
+local scriptHeaderLabel = Instance.new("TextLabel")
+scriptHeaderLabel.Size = UDim2.new(1, 0, 0, 18)
+scriptHeaderLabel.Position = UDim2.new(0, 0, 0, 149)
+scriptHeaderLabel.BackgroundTransparency = 1
+scriptHeaderLabel.Text = "Script Terdeteksi (Klik untuk info/salin path):"
+scriptHeaderLabel.TextColor3 = Color3.fromRGB(25, 35, 70)
+scriptHeaderLabel.Font = Enum.Font.GothamSemibold
+scriptHeaderLabel.TextSize = 11
+scriptHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
+scriptHeaderLabel.Parent = contentFrame
+
+-- Daftar Script Hasil Import
+local scriptListFrame = Instance.new("ScrollingFrame")
+scriptListFrame.Name = "ScriptList"
+scriptListFrame.Size = UDim2.new(1, 0, 0, 82)
+scriptListFrame.Position = UDim2.new(0, 0, 0, 168)
+scriptListFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+scriptListFrame.BackgroundTransparency = 0.35
+scriptListFrame.BorderSizePixel = 0
+scriptListFrame.ScrollBarThickness = 4
+scriptListFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 130, 225)
+scriptListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scriptListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scriptListFrame.Parent = contentFrame
+
+local scriptListCorner = Instance.new("UICorner")
+scriptListCorner.CornerRadius = UDim.new(0, 9)
+scriptListCorner.Parent = scriptListFrame
+
+local scriptListLayout = Instance.new("UIListLayout")
+scriptListLayout.Padding = UDim.new(0, 4)
+scriptListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+scriptListLayout.Parent = scriptListFrame
+
+local scriptListPadding = Instance.new("UIPadding")
+scriptListPadding.PaddingTop = UDim.new(0, 5)
+scriptListPadding.PaddingBottom = UDim.new(0, 5)
+scriptListPadding.PaddingLeft = UDim.new(0, 5)
+scriptListPadding.PaddingRight = UDim.new(0, 5)
+scriptListPadding.Parent = scriptListFrame
 
 -- Status Label
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(1, 0, 0, 18)
-statusLabel.Position = UDim2.new(0, 0, 0, 218)
+statusLabel.Position = UDim2.new(0, 0, 0, 254)
 statusLabel.BackgroundTransparency = 1
-statusLabel.Text = "Siap memindai folder Workspace..."
+statusLabel.Text = "Siap memindai folder..."
 statusLabel.TextColor3 = Color3.fromRGB(40, 50, 88)
 statusLabel.Font = Enum.Font.Gotham
 statusLabel.TextSize = 11
@@ -357,7 +397,7 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
 statusLabel.Parent = contentFrame
 
--- Tombol Import (Ukuran Proporsional)
+-- Tombol Import Proporsional
 local importBtn = Instance.new("TextButton")
 importBtn.Name = "ImportButton"
 importBtn.Size = UDim2.new(0, 120, 0, 32)
@@ -381,7 +421,7 @@ importGradient.Color = ColorSequence.new({
 })
 importGradient.Parent = importBtn
 
--- Sistem Geser / Tarik Bebas (Smooth Drag untuk Touch & Mouse)
+-- Sistem Geser / Tarik Bebas (Smooth Drag Touch & Mouse)
 local dragging = false
 local dragInput: InputObject? = nil
 local dragStartPos = Vector3.zero
@@ -419,6 +459,43 @@ UserInputService.InputChanged:Connect(function(input: InputObject)
 	end
 end)
 
+-- Fungsi Menampilkan Daftar Script Setelah Import
+local function refreshScriptList(scriptsList: {LuaSourceContainer})
+	for _, child in ipairs(scriptListFrame:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+
+	for _, scr in ipairs(scriptsList) do
+		if scr and scr.Parent then
+			local scrBtn = Instance.new("TextButton")
+			scrBtn.Size = UDim2.new(1, 0, 0, 24)
+			scrBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			scrBtn.BackgroundTransparency = 0.25
+			scrBtn.Text = "  📜 " .. scr.Name .. " (" .. scr.ClassName .. ")"
+			scrBtn.TextColor3 = Color3.fromRGB(22, 32, 65)
+			scrBtn.Font = Enum.Font.GothamMedium
+			scrBtn.TextSize = 11
+			scrBtn.TextXAlignment = Enum.TextXAlignment.Left
+			scrBtn.TextTruncate = Enum.TextTruncate.AtEnd
+			scrBtn.Parent = scriptListFrame
+
+			local scrCorner = Instance.new("UICorner")
+			scrCorner.CornerRadius = UDim.new(0, 6)
+			scrCorner.Parent = scrBtn
+
+			scrBtn.MouseButton1Click:Connect(function()
+				local fullPath = scr:GetFullName()
+				if setclipboard then
+					pcall(setclipboard, fullPath)
+				end
+				statusLabel.Text = "Path: " .. fullPath
+			end)
+		end
+	end
+end
+
 -- Fungsi Mengisi Ulang Daftar File
 local fileButtons = {}
 local function populateFileList()
@@ -430,7 +507,7 @@ local function populateFileList()
 
 	local files = getSupportedFiles("")
 	if #files == 0 then
-		statusLabel.Text = "Tidak ada file .rbxm/.rbxl ditemukan di Workspace."
+		statusLabel.Text = "Tidak ada file .rbxm/.rbxl ditemukan."
 		return
 	end
 
@@ -439,19 +516,19 @@ local function populateFileList()
 	for _, filePath in ipairs(files) do
 		local fileName = filePath:match("([^/\\]+)$") or filePath
 		local itemBtn = Instance.new("TextButton")
-		itemBtn.Size = UDim2.new(1, 0, 0, 28)
+		itemBtn.Size = UDim2.new(1, 0, 0, 26)
 		itemBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		itemBtn.BackgroundTransparency = 0.25
 		itemBtn.Text = "  📄 " .. fileName
 		itemBtn.TextColor3 = Color3.fromRGB(22, 32, 65)
 		itemBtn.Font = Enum.Font.GothamMedium
-		itemBtn.TextSize = 12
+		itemBtn.TextSize = 11
 		itemBtn.TextXAlignment = Enum.TextXAlignment.Left
 		itemBtn.TextTruncate = Enum.TextTruncate.AtEnd
 		itemBtn.Parent = fileListFrame
 
 		local itemCorner = Instance.new("UICorner")
-		itemCorner.CornerRadius = UDim.new(0, 7)
+		itemCorner.CornerRadius = UDim.new(0, 6)
 		itemCorner.Parent = itemBtn
 
 		itemBtn.MouseButton1Click:Connect(function()
@@ -475,7 +552,7 @@ end
 -- Event Tombol Buka / Tutup
 toggleBtn.MouseButton1Click:Connect(function()
 	isMinimized = not isMinimized
-	local targetSize = isMinimized and UDim2.new(0, 310, 0, 42) or UDim2.new(0, 310, 0, 340)
+	local targetSize = isMinimized and UDim2.new(0, 315, 0, 42) or UDim2.new(0, 315, 0, 385)
 	toggleBtn.Text = isMinimized and "Buka" or "Tutup"
 
 	TweenService:Create(
@@ -497,8 +574,10 @@ importBtn.MouseButton1Click:Connect(function()
 		return
 	end
 
-	statusLabel.Text = "Memuat file..."
-	local ok, msg = RBXMImporter.ImportFile(selectedFilePath)
+	statusLabel.Text = "Memproses file..."
+	local ok, msg, scriptsList = RBXMImporter.ImportFile(selectedFilePath)
+	importedScripts = scriptsList or {}
+	refreshScriptList(importedScripts)
 	statusLabel.Text = (ok and "✔ " or "✖ ") .. msg
 end)
 

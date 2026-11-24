@@ -1,4 +1,4 @@
--- File: RBXM.lua (Glassmorphism Solid + Tombol Proporsional + Smooth Drag Touch/Mouse)
+-- File: RBXM.lua (Glassmorphism Solid + Gradasi Gemini + Support .rbxm/.rbxmx/.rbxl/.rbxlx)
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
@@ -13,8 +13,8 @@ if existingGui then
 	existingGui:Destroy()
 end
 
--- Fungsi Pemindai File .rbxm / .rbxmx di Workspace
-local function getRBXMFiles(directory: string?): {string}
+-- 1. Pemindai File .rbxm, .rbxmx, .rbxl, dan .rbxlx di Workspace
+local function getSupportedFiles(directory: string?): {string}
 	local results = {}
 	if not listfiles then
 		return results
@@ -30,7 +30,7 @@ local function getRBXMFiles(directory: string?): {string}
 			local normalized = item:gsub("\\", "/")
 			if isfolder and isfolder(normalized) then
 				scan(normalized)
-			elseif normalized:lower():match("%.rbxm[x]?$") then
+			elseif normalized:lower():match("%.rbxm[x]?$") or normalized:lower():match("%.rbxl[x]?$") then
 				table.insert(results, normalized)
 			end
 		end
@@ -40,59 +40,103 @@ local function getRBXMFiles(directory: string?): {string}
 	return results
 end
 
--- Fungsi Membuat Ulang Script agar Editable + Mempertahankan Nama Asli & Anak Objek
+-- 2. Pemindah Anak Objek Aman (Melewati PackageLink & Mencegah Error Parent)
+local function safeMoveChildren(sourceParent: Instance, targetParent: Instance)
+	for _, child in ipairs(sourceParent:GetChildren()) do
+		if child:IsA("PackageLink") then
+			continue
+		end
+
+		pcall(function()
+			child.Parent = targetParent
+		end)
+	end
+end
+
+-- 3. Membuat Ulang Script agar Editable + Mempertahankan Nama Asli & Anak Objek
 local function makeScriptsEditable(root: Instance)
-	local scriptsToReplace = {}
+	local targets = {}
 	for _, desc in ipairs(root:GetDescendants()) do
-		if desc:IsA("LuaSourceContainer") then
-			table.insert(scriptsToReplace, desc)
+		if desc:IsA("LocalScript") or desc:IsA("Script") or desc:IsA("ModuleScript") then
+			table.insert(targets, desc)
 		end
 	end
 
-	for _, oldScript in ipairs(scriptsToReplace) do
-		local originalName = oldScript.Name
-		local originalParent = oldScript.Parent
-		local className = oldScript.ClassName
-		local sourceCode = ""
+	for _, oldScript in ipairs(targets) do
+		if not oldScript.Parent then
+			continue
+		end
 
+		local scriptName = oldScript.Name
+		local scriptParent = oldScript.Parent
+		local className = oldScript.ClassName
+
+		local rawSource = ""
 		pcall(function()
-			sourceCode = oldScript.Source
+			rawSource = oldScript.Source
 		end)
 
-		local okCreate, newScript = pcall(function()
+		local isDisabled = false
+		if oldScript:IsA("BaseScript") then
+			pcall(function()
+				isDisabled = oldScript.Disabled
+			end)
+		end
+
+		local runCtx = nil
+		if oldScript:IsA("Script") then
+			pcall(function()
+				runCtx = oldScript.RunContext
+			end)
+		end
+
+		local okNew, freshScript = pcall(function()
 			return Instance.new(className)
 		end)
 
-		if okCreate and newScript then
-			newScript.Name = originalName
-
-			pcall(function()
-				newScript.Source = sourceCode
-			end)
-
-			if oldScript:IsA("BaseScript") and newScript:IsA("BaseScript") then
-				pcall(function()
-					newScript.Disabled = oldScript.Disabled
-				end)
-			end
-
-			if oldScript:IsA("Script") and newScript:IsA("Script") then
-				pcall(function()
-					newScript.RunContext = oldScript.RunContext
-				end)
-			end
+		if okNew and freshScript then
+			freshScript.Name = scriptName
 
 			for _, child in ipairs(oldScript:GetChildren()) do
-				child.Parent = newScript
+				if not child:IsA("PackageLink") then
+					pcall(function()
+						child.Parent = freshScript
+					end)
+				end
 			end
 
-			newScript.Parent = originalParent
-			oldScript:Destroy()
+			local parentOk = pcall(function()
+				freshScript.Parent = scriptParent
+			end)
+
+			if parentOk then
+				pcall(function()
+					freshScript.Source = rawSource
+				end)
+
+				if freshScript:IsA("BaseScript") then
+					pcall(function()
+						freshScript.Disabled = isDisabled
+					end)
+				end
+
+				if freshScript:IsA("Script") and runCtx ~= nil then
+					pcall(function()
+						freshScript.RunContext = runCtx
+					end)
+				end
+
+				pcall(function()
+					oldScript:Destroy()
+				end)
+			else
+				freshScript:Destroy()
+			end
 		end
 	end
 end
 
--- Fungsi Import Model ke Workspace
+-- 4. Fungsi Import untuk .rbxm, .rbxmx, .rbxl, dan .rbxlx
 function RBXMImporter.ImportFile(filePath: string)
 	if not filePath or filePath == "" then
 		return false, "Pilih file terlebih dahulu!"
@@ -112,17 +156,33 @@ function RBXMImporter.ImportFile(filePath: string)
 	end)
 
 	if not success or not objects or #objects == 0 then
-		return false, "Gagal membaca file RBXM."
+		return false, "Gagal membaca file RBXM/RBXL."
 	end
 
-	local cleanName = filePath:match("([^/\\]+)%.rbxm[x]?$") or "ImportedModel"
+	local cleanName = filePath:match("([^/\\]+)%.rbx[ml][x]?$") or "ImportedModel"
 	local container = Instance.new("Folder")
 	container.Name = cleanName
 	container.Parent = workspace
 
 	for _, obj in ipairs(objects) do
 		if typeof(obj) == "Instance" then
-			obj.Parent = container
+			if obj:IsA("PackageLink") then
+				continue
+			end
+
+			if obj.ClassName == "Workspace" then
+				safeMoveChildren(obj, container)
+				pcall(function()
+					obj:Destroy()
+				end)
+			else
+				local moved = pcall(function()
+					obj.Parent = container
+				end)
+				if not moved then
+					safeMoveChildren(obj, container)
+				end
+			end
 		end
 	end
 
@@ -131,7 +191,7 @@ function RBXMImporter.ImportFile(filePath: string)
 	return true, "Berhasil import: " .. cleanName
 end
 
--- Membangun Antarmuka UI
+-- 5. Membangun Antarmuka UI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GeminiRBXMImporter"
 screenGui.ResetOnSpawn = false
@@ -180,7 +240,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -92, 1, 0)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "✦ RBXM Importer"
+titleLabel.Text = "✦ RBXM / RBXL Importer"
 titleLabel.TextColor3 = Color3.fromRGB(22, 32, 62)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
@@ -226,7 +286,7 @@ subHeader.Parent = contentFrame
 local pickLabel = Instance.new("TextLabel")
 pickLabel.Size = UDim2.new(0.7, 0, 1, 0)
 pickLabel.BackgroundTransparency = 1
-pickLabel.Text = "Pilih File (.rbxm):"
+pickLabel.Text = "Pilih File (.rbxm / .rbxl):"
 pickLabel.TextColor3 = Color3.fromRGB(25, 35, 70)
 pickLabel.Font = Enum.Font.GothamSemibold
 pickLabel.TextSize = 12
@@ -297,7 +357,7 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
 statusLabel.Parent = contentFrame
 
--- Tombol Import (Ukuran Lebih Kecil & Proporsional)
+-- Tombol Import (Ukuran Proporsional)
 local importBtn = Instance.new("TextButton")
 importBtn.Name = "ImportButton"
 importBtn.Size = UDim2.new(0, 120, 0, 32)
@@ -368,9 +428,9 @@ local function populateFileList()
 	table.clear(fileButtons)
 	selectedFilePath = nil
 
-	local files = getRBXMFiles("")
+	local files = getSupportedFiles("")
 	if #files == 0 then
-		statusLabel.Text = "Tidak ada file .rbxm ditemukan di Workspace."
+		statusLabel.Text = "Tidak ada file .rbxm/.rbxl ditemukan di Workspace."
 		return
 	end
 
@@ -437,7 +497,7 @@ importBtn.MouseButton1Click:Connect(function()
 		return
 	end
 
-	statusLabel.Text = "Memuat model..."
+	statusLabel.Text = "Memuat file..."
 	local ok, msg = RBXMImporter.ImportFile(selectedFilePath)
 	statusLabel.Text = (ok and "✔ " or "✖ ") .. msg
 end)
